@@ -1,0 +1,48 @@
+name: Verify published CLI
+
+on:
+  workflow_dispatch:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  install:
+    name: Install and use (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+      HOMEBREW_NO_INSTALL_CLEANUP: "1"
+    steps:
+      - name: Locate Linux Homebrew
+        if: runner.os == 'Linux'
+        run: echo '/home/linuxbrew/.linuxbrew/bin' >> "$GITHUB_PATH"
+      - name: Install the published formula
+        run: brew install kkuckein/pgday/pgday
+      - name: Test the installed executable
+        run: brew test kkuckein/pgday/pgday
+      - name: Exercise the live anonymous API
+        shell: bash
+        run: |
+          "$(brew --prefix node@24)/bin/node" --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import {execFileSync} from 'node:child_process';
+          const cli = (...args) => JSON.parse(execFileSync('pgday', args, {encoding:'utf8', env:{PATH:process.env.PATH}}));
+          const event = cli('events','list','--sandbox').data[0];
+          const lead = cli('leads','list','--sandbox','--event',event.id,'--limit','1').data[0];
+          assert.match(cli('leads','get',lead.id,'--sandbox').data.contact_email, /@example\.invalid$/);
+          assert.ok(cli('events','stats',event.id,'--sandbox').data);
+          assert.ok(cli('leaderboard','--sandbox','--event',event.id).data.length);
+          assert.equal(cli('spec','--sandbox').openapi,'3.1.1');
+          assert.equal(cli('spec').openapi,'3.1.1');
+          assert.ok(cli('scopes').scopes.length);
+          assert.equal(cli('onboarding').sandbox.authentication_required,false);
+          console.log('Nine installed CLI commands passed against the public site.');
+          NODE
